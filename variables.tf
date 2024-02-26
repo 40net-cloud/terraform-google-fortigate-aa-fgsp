@@ -90,46 +90,12 @@ variable "logdisk_size" {
   }
 }
 
-# Base image specs (deprecated)
-/*
-variable image_family {
-  type        = string
-  description = "Image family. Overriden by providing explicit image name"
-  default     = "fortigate-72-byol"
-  validation {
-    condition     = can(regex("^fortigate-[67][0-9]-(byol|payg)$", var.image_family))
-    error_message = "The image_family is always in form 'fortigate-[major version]-[payg or byol]' (eg. 'fortigate-72-byol')."
-  }
-}
-
-variable image_name {
-  type        = string
-  description = "Image name. Overrides var.firmware_family"
-  default     = null
-  nullable    = true
-}
-
-variable image_project {
-  type        = string
-  description = "Project hosting the image. Defaults to Fortinet public project"
-  default     = "fortigcp-project-001"
-}
-*/
-
 variable "api_token_secret_name" {
   type        = string
   description = "Name of Secret Manager secret to be created and used for storing FortiGate API token. If left to empty string the secret will not be created and token will be available in outputs only."
   default     = ""
 }
 
-# Licenses (deprecated)
-/*
-variable licensing {
-  type = string
-  default = "byol"
-  description = "Licensing scheme used for this deployment: byol, payg or flexvm"
-}
-*/
 
 variable "license_files" {
   type        = list(string)
@@ -154,7 +120,7 @@ variable "image" {
   })
   description = "Indicate FortiOS image you want to deploy by specifying one of the following: image family name (as image.family); firmware version, architecture and licensing (as image.version, image.arch and image.lic); image name (as image.name) optionally with image project name for custom images (as image.project)."
   default = {
-    family = "fortigate-74-payg"
+    version = "7.2.7"
   }
   validation {
     condition     = contains(["arm", "x64"], var.image.arch)

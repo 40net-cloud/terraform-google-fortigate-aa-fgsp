@@ -7,6 +7,9 @@ terraform {
     google-beta = {
       source = "hashicorp/google-beta"
     }
+    cloudinit = {
+      source = "hashicorp/cloudinit"
+    }
   }
 }
 
@@ -37,7 +40,7 @@ locals {
   # Auto-set NIC type to GVNIC if ARM image was selected
   nic_type = var.image.arch == "arm" ? "GVNIC" : var.nic_type
 
-  # Pick explicit or detected zones and save to locals
+  # Pick explicit or detected zones and save to locals. limit to 2
   zones = var.zones[0] != "" ? var.zones : data.google_compute_zones.zones_in_region.names
 }
 
@@ -171,6 +174,7 @@ resource "google_compute_instance" "fgt-vm" {
   boot_disk {
     initialize_params {
       image = local.fgt_image.self_link
+      labels = var.labels
     }
   }
   attached_disk {
@@ -218,7 +222,7 @@ resource "google_compute_region_health_check" "health_check" {
 }
 
 resource "google_compute_instance_group" "fgt-umigs" {
-  count = length(local.zones)
+  count = 2
 
   name = "${local.prefix}umig${count.index}-${local.region_short}"
   zone = local.zones[count.index]
@@ -227,75 +231,4 @@ resource "google_compute_instance_group" "fgt-umigs" {
     google_compute_instance.fgt-vm[*].zone,
   [local.zones[count.index]])
 }
-
-/*
-# ELB BES
-resource "google_compute_region_backend_service" "elb_bes" {
-  provider               = google-beta
-  name                   = "${local.prefix}bes-elb-${local.region_short}"
-  region                 = var.region
-  load_balancing_scheme  = "EXTERNAL"
-  protocol               = "UNSPECIFIED"
-
-  dynamic "backend" {
-    for_each = google_compute_instance_group.fgt-umigs
-    content {
-      group = backend.value.self_link
-    }
-  }
-
-  health_checks          = [google_compute_region_health_check.health_check.self_link]
-  connection_tracking_policy {
-    connection_persistence_on_unhealthy_backends = "NEVER_PERSIST"
-  }
-  session_affinity = "CLIENT_IP"
-}
-*/
-
-/*
-# Firewall rules
-resource "google_compute_firewall" "allow-mgmt" {
-  name                   = "${local.prefix}fw-mgmt-allow-admin"
-  network                = data.google_compute_subnetwork.subnets[3].network
-  source_ranges          = var.admin_acl
-  target_tags            = ["fgt"]
-
-  allow {
-    protocol             = "all"
-  }
-}
-
-resource "google_compute_firewall" "allow-hasync" {
-  name                   = "${local.prefix}fw-hasync-allow-fgt"
-  network                = data.google_compute_subnetwork.subnets[2].network
-  source_tags            = ["fgt"]
-  target_tags            = ["fgt"]
-
-  allow {
-    protocol             = "all"
-  }
-}
-
-resource "google_compute_firewall" "allow-port1" {
-  name                   = "${local.prefix}fw-ext-allowall"
-  network                = data.google_compute_subnetwork.subnets[0].network
-  source_ranges          = ["0.0.0.0/0"]
-
-  allow {
-    protocol             = "all"
-  }
-}
-
-resource "google_compute_firewall" "allow-port2" {
-  name                   = "${local.prefix}fw-int-allowall"
-  network                = data.google_compute_subnetwork.subnets[1].network
-  source_ranges          = ["0.0.0.0/0"]
-
-  allow {
-    protocol             = "all"
-  }
-}
-*/
-
-
 

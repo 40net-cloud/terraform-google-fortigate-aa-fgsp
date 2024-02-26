@@ -1,6 +1,11 @@
 variable "ver" {
 	type = string
 	description = "FortiGate firmware version, eg. \"7.4.1\"."
+	default = ""
+	validation {
+		condition = var.ver == "" || contains([2,3], try(length(split(".", var.ver)), 0))
+		error_message = "Firmware version must be 2 or 3 numbers separated by dot (eg. 7.2 or 7.2.7), or empty string."
+	}
 }
 
 variable "lic" {
@@ -20,5 +25,18 @@ variable "arch" {
 	validation {
 		condition = contains(["arm", "x64"], var.arch)
 		error_message = "Architecture must be either 'arm' or 'x64' (default: 'x64')"
+	}
+}
+
+variable "family" {
+	type = string
+	default = ""
+	description = "Family name of the image"
+}
+
+check "ver_xor_family" {
+	assert {
+		condition = !( var.ver != "" && var.family != "")
+		error_message = "Only one of var.ver and var.family can be set"
 	}
 }
