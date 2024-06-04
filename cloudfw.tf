@@ -12,8 +12,8 @@ resource "google_compute_firewall" "allow_mgmt" {
 
 resource "google_compute_firewall" "allow_fgsp" {
   name          = "${local.prefix}fw-allow-fgsp"
-  network       = data.google_compute_subnetwork.connected["port${length(var.subnets)}"].network
-  source_tags = var.fgt_tags
+  network       = data.google_compute_subnetwork.connected[local.fgsp_port].network
+  source_tags   = var.fgt_tags
   target_tags   = var.fgt_tags
 
   allow {
