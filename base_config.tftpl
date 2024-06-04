@@ -3,18 +3,21 @@ config system global
 end
 
 config sys interface
-%{ for indx, address in prv_ips ~}
-  edit port${indx+1}
+%{ for port, address in prv_ips ~}
+  edit ${port}
     set mode static
     set ip ${address}/32
+    %{ if port==mgmt_port ~}
+    set allowaccess ping https ssh
+    %{ endif ~}
   next
 %{ endfor ~}
 end
 
 config sys interface
-%{ for indx, ilb in ilb_ips ~}
-  edit port${indx+1}
-    set secondary_ip enable
+%{ for port, ilb in ilb_ips ~}
+  edit ${port}
+    set secondary-IP enable
     config secondaryip
       edit 0
       set ip ${ilb.address}/32
@@ -43,17 +46,42 @@ config route static
 %{ for subnet, info in subnets ~}
   edit 0
     set dst ${subnet}
-    set gateway ${info.gw}
+    set gateway ${gateways[info.dev]}
     set device ${info.dev}
     set comment ${info.name}
   next
 %{ endfor ~}
   edit 0
     set device port1
-    set comment "default"
-    set gateway ${default_gw}
+    set comment "default via external load balancer"
+    set gateway ${gateways["port1"]}
+    set priority 5
+    %{ if length(frontends)>0 ~}
     set preferred-source ${frontends[0]}
+    %{ endif ~}
   next
+%{ if mgmt_port_public ~}  
+  edit 0
+    set device ${mgmt_port}
+    set comment "default via public management port"
+    set priority 2
+    set gateway ${gateways[mgmt_port]}
+  next
+%{ endif ~}
+%{ for port,ilb in ilb_ips ~}
+  edit 0
+    set device ${port}
+    set gateway ${gateways[port]}
+    set dst 35.191.0.0/16
+    comment "GCP load balancer health checks"
+  next
+  edit 0
+    set device ${port}
+    set gateway ${gateways[port]}
+    set dst 130.211.0.0/22
+    comment "GCP load balancer health checks"
+  next
+%{ endfor ~}
 end
 
 config system probe-response
@@ -89,6 +117,14 @@ config system standalone-cluster
         %{ endfor }
     end
 end
+
+%{ if fortimanager.ip != null ~}
+config system central-management
+  set type fortimanager
+  set serial-number ${fortimanager.serial}
+  set fmg ${fortimanager.ip}
+end
+%{ endif }
 
 ${fgt_config}
 
