@@ -213,8 +213,12 @@ variable "fortimanager" {
 variable "fgsp_port" {
   type = string
   nullable = true
-  default = null
+  default = "auto"
   description = "Enforce a custom port for FGSP sync instead of the last one. Provide value as FortiGate port name (eg. \"port3\")"
+  validation {
+    condition = var.fgsp_port != "port1"
+    error_message = "var.fgsp_port variable cannot be set to port1. To use port1 for both FGSP sync and production traffic set var.fgsp_port to null."
+  }
 }
 
 variable "mgmt_port" {

@@ -29,7 +29,7 @@ data "google_client_config" "default" {}
 #
 locals {
   service_account = coalesce(var.service_account, data.google_compute_default_service_account.default.email)
-  region          = coalesce(var.region, join("-", slice(split("-", var.zones[0]), 0, 2)), data.google_client_config.default.region)
+  region          = coalesce(var.region, try(join("-", slice(split("-", var.zones[0]), 0, 2)), null), data.google_client_config.default.region)
 
   #sanitize labels
   labels = { for k, v in var.labels : k => replace(lower(v), " ", "_") }
@@ -49,8 +49,9 @@ locals {
   # Calculate last port for management or copy from vars. Used for FGT configuration bootstrap, ACL, and public IPs. 
   mgmt_port = var.mgmt_port != null ? var.mgmt_port : "port${length(var.subnets)}"
 
-  # Calculate FGSP port (last one)
-  fgsp_port = var.fgsp_port != null ? var.fgsp_port : "port${length(var.subnets)}"
+  # Calculate FGSP port (last one) if set to "auto", otherwise use variable. Null means no dedicated port => FGSP over port1.
+  dedicated_fgsp_port = var.fgsp_port != "auto" ? var.fgsp_port : "port${length(var.subnets)}"
+  fgsp_port = coalesce(local.dedicated_fgsp_port, "port1" )
 
   #
   # Create common lists
@@ -59,7 +60,7 @@ locals {
   hc_ranges_elb = ["35.191.0.0/16", "209.85.152.0/22", "209.85.204.0/22"]
   ports_all = [ for indx in range(length(var.subnets)) : "port${indx+1}"]
   //ports_internal = slice( local.ports_all, 1, length(var.subnets)-1 )
-  ports_internal = setsubtract( local.ports_all, setunion(var.ports_external, [local.mgmt_port]))
+  ports_internal = setsubtract( local.ports_all, setunion(var.ports_external, [local.dedicated_fgsp_port]))
   fgts = [ for indx in range(var.cluster_size) : "fgt${indx+1}" ]
 }
 
