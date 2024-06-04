@@ -7,7 +7,6 @@ variable "region" {
 module "fgtaa" {
     source = "../../"
 
-    //region  = var.region
     zones = ["${var.region}-b", "${var.region}-c"]
     prefix = "fgtaa"
     subnets = ["external", "internal", "hasync"]
@@ -21,4 +20,8 @@ module "fgtaa" {
         ip = "fmg.gcp.40net.cloud"
         serial = "FMVMELTM23000032"
     }
+}
+
+output "fgtaa" {
+  value = module.fgtaa
 }

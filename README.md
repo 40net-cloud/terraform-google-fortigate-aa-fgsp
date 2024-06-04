@@ -47,9 +47,25 @@ config system ha
 end
 ```
 
+...and add proper tag-based firewall rules to Cloud Firewall.
+
 We recommend to assign a dedicated port for FGSP sync. By default this role will be assigned to the last port (last subnet on the var.subnets list). You can modify the default behavior:
 
-- to not use any port as dedicated for FGSP and use the **port1** for both production traffic and FGSP sync: set var.fgsp_port to null
-- to use a different port as dedicated for FGSP (it will not be linked to any load balancer and access will be restricted): set var.fgsp_port to the name of FortiGate port (eg. "port2")
+- to not use any port as dedicated for FGSP and use the **port1** for both production traffic and FGSP sync: set `var.fgsp_port` to `null`
+- to use a different port as dedicated for FGSP (it will not be linked to any load balancer and access will be restricted): set `var.fgsp_port` to the name of FortiGate port (eg. "port2")
 
 **NOTE: do NOT set fgsp_port to port1**
+
+#### Management
+
+All deployed FortiGate VM instances can be accessed and managed individually using their private or (optionally) public IP address. The default setting enables public IP addresses on the FGSP port. Although it is a convenient setting, it is not the most secure one. Make sure you adapt settings to your local deployment and use private connectivity for administrative access whenever possible. The following variables can be set to modify the default configuration for management port:
+
+- set `var.mgmt_port` to your desired FortiGate port name (eg. "port1") to enable management on that port. Leaving this variable to default will use the FGSP port
+- set `var.mgmt_port_public` to `false` to disable external IP addresses for management
+
+The default *admin* password will be set to instance ID and will have to be changed upon the first login.
+
+Deployed FortiGates can be optionally linked to FortiManager during bootstraping. To enable this feature use var.fortimanager variable and set it to object including the following properties:
+
+- `ip` - IP address or FQDN name of FortiManager
+- `serial` - serial number of FortiManager. Note that missing serial number will cause the connection to fail.

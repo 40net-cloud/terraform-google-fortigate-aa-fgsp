@@ -2,8 +2,8 @@ output fgt_mgmt_eips {
   value = [ for addr in google_compute_address.mgmt: addr.address ]
 }
 
-output fgt_password {
-  value = google_compute_instance.fgt_vm[0].instance_id
+output fgt_passwords {
+  value = google_compute_instance.fgt_vm[*].instance_id
 }
 
 output fgt_self_links {

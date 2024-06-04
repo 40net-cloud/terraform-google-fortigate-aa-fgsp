@@ -28,8 +28,11 @@ data "google_client_config" "default" {}
 # Apply defaults if not overriden in variables, sanitize inputs
 #
 locals {
+  # if service account is not passed explicitly in variable, pick the default Compute Engine account
   service_account = coalesce(var.service_account, data.google_compute_default_service_account.default.email)
-  region          = coalesce(var.region, try(join("-", slice(split("-", var.zones[0]), 0, 2)), null), data.google_client_config.default.region)
+
+  # derive region from zones if provided, otherwise use the region from variable, as last resort use default region from provider
+  region          = coalesce(try(join("-", slice(split("-", var.zones[0]), 0, 2)), null), var.region, data.google_client_config.default.region)
 
   #sanitize labels
   labels = { for k, v in var.labels : k => replace(lower(v), " ", "_") }
