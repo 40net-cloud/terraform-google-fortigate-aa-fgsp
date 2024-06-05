@@ -33,7 +33,34 @@ Examples can be found in [examples](examples) directory.
 Terraform module for deploying Active-Active FGSP cluster of FortiGates
 
 
-## Configuration
+### Configuration
+
+#### Firmware version and choosing base image
+
+Selecting base image for VM deployment is crucial, but complicated task. The image depends on three factors: version, licensing (BYOL or PAYG) and VM hardware architecture (Intel or ARM). This module supports multiple ways to select the image using `var.image` object:
+
+- Default: by default image will be selected to match a recent mature firmware version. It will not be the newest version. Licensing will be automatically set to PAYG unless you add license files or flex tokens to the module variables
+- select by version: provide the exact version (eg. "7.4.4") in `var.image.version`. You can also provide only the major version (eg. "7.4") to let the template pick the latest available firmware from the indicated branch
+- select by family: add the image family name (eg. "fortigate-72-byol") in `var.image.family` to select the latest available firmware from indicated branch and license type
+- select by name: this option is useful if you deploy using custom images. You can set the image name using `var.image.name` and project name using `var.image.project`
+
+**Remember to use HCL notation when providing object values. Example *var.image.version="7.4.4"* value provided above should be written as**
+
+```
+image = {
+  version = "7.4.4"
+}
+```
+
+PAYG and BYOL deployments use different base images. Be careful to not deploy PAYG image if you have purchased a license from Fortinet channel partner as you will be charged twice. While this module by default deploys PAYG images it will automatically switch to BYOL if you add FortiFlex tokens or license files to the configuration. You can also enforce properly licensed image manually by setting `var.image.lic` variable to licensing option (in lowercase). Eg.:
+
+```
+image = {
+    lic = "byol"
+}
+```
+
+If deploying using ARM-based machine types you have to indicate a proper image compiled for this architecture using `var.image.arch` variable.
 
 #### FGSP
 
@@ -54,16 +81,18 @@ We recommend to assign a dedicated port for FGSP sync. By default this role will
 - to not use any port as dedicated for FGSP and use the **port1** for both production traffic and FGSP sync: set `var.fgsp_port` to `null`
 - to use a different port as dedicated for FGSP (it will not be linked to any load balancer and access will be restricted): set `var.fgsp_port` to the name of FortiGate port (eg. "port2")
 
-**NOTE: do NOT set fgsp_port to port1**
+**NOTE: do NOT set dedicated fgsp_port to port1**
 
-#### Management
+#### Management access
 
 All deployed FortiGate VM instances can be accessed and managed individually using their private or (optionally) public IP address. The default setting enables public IP addresses on the FGSP port. Although it is a convenient setting, it is not the most secure one. Make sure you adapt settings to your local deployment and use private connectivity for administrative access whenever possible. The following variables can be set to modify the default configuration for management port:
 
 - set `var.mgmt_port` to your desired FortiGate port name (eg. "port1") to enable management on that port. Leaving this variable to default will use the FGSP port
 - set `var.mgmt_port_public` to `false` to disable external IP addresses for management
 
-The default *admin* password will be set to instance ID and will have to be changed upon the first login.
+The default *admin* passwords will be set to instance ID (and written to `fgt_passwords` output) and will have to be changed upon the first login.
+
+#### FortiManager integration
 
 Deployed FortiGates can be optionally linked to FortiManager during bootstraping. To enable this feature use var.fortimanager variable and set it to object including the following properties:
 
