@@ -63,3 +63,23 @@ run "img_error_license_mismatch" {
     data.google_compute_image.by_family_name
   ]
 }
+
+run "img_auto_byol" {
+  command = plan
+
+  variables {
+    flex_tokens = ["DUMMY1", "DUMMY2"]
+    image = {
+      version = "7.4"
+    }
+  }
+
+  assert {
+    condition     = strcontains(local.fgt_image.self_link, "744")
+    error_message = "Image selected by firmware version should contain string '744'"
+  }
+  assert {
+    condition     = !strcontains(local.fgt_image.self_link, "ondemand")
+    error_message = "Image should switch to BYOL"
+  }
+}
