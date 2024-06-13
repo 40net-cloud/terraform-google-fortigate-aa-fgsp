@@ -126,5 +126,15 @@ config system central-management
 end
 %{ endif }
 
+config firewall ippool
+%{ for name, eip in frontends ~}
+  edit ${name}
+  set startip ${eip}
+  set endip ${eip}
+  set comment "GCP load balancer frontend"
+  next
+%{ endfor ~}
+end
+
 ${fgt_config}
 
