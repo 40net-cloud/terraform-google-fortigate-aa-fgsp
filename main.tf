@@ -145,7 +145,7 @@ data "cloudinit_config" "fgt" {
       ha_indx    = count.index
       # each private address on last interface except for matching the instance index
       ha_peers  = [for key, addr in google_compute_address.prv : addr.address if tonumber(split("_", key)[1]) != count.index && split("_", key)[0] == local.fgsp_port]
-      frontends = [for eip in var.frontends : try(local.eip_all[eip], local.eip_all[eip.name])]
+      frontends = concat([for eip in var.frontends : try(local.eip_all[eip], local.eip_all[eip.name])], [for eipobj in var.frontends_obj : eipobj.address])
       mgmt_port = local.mgmt_port
       mgmt_port_public = var.mgmt_port_public
       fortimanager = var.fortimanager
