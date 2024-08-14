@@ -6,7 +6,7 @@ locals {
   # format existing EIP list into mapping by name, skip non-existing addresses, skip IN_USE addresses
   eip_existing_existing = { for addr, info in data.google_compute_addresses.existing : addr => info if length(info.addresses) > 0 }
   eip_existing_from_data       = { for addr, info in local.eip_existing_existing : trimprefix(info.addresses[0].name, local.prefix) => addr if info.addresses[0].status != "IN_USE" }
-  eip_existing_from_obj = { for info in var.frontends : info.name => info.address if can(info.name) && can(info.address)}
+  eip_existing_from_obj = { for info in var.frontends_obj : info.name => info.address if can(info.name) && can(info.address)}
   eip_existing = merge(local.eip_existing_from_data, local.eip_existing_from_obj)
 
   # format new EIP list into mapping by name
@@ -42,9 +42,12 @@ resource "google_compute_address" "new_eip" {
   region       = local.region
   address_type = "EXTERNAL"
 }
-/*
-resource "google_compute_forwarding_rule" "frontends" {
-  for_each = local.eip_all
+
+# Separate block for frontends passed using var.frontends_obj. 
+# The for_each in google_compute_forwarding_rule.frontends block is already complicated enough.
+#
+resource "google_compute_forwarding_rule" "frontends_obj" {
+  for_each = { for info in var.frontends_obj : info.name => info.address }
 
   name                  = "${local.prefix}fr-${each.key}"
   region                = local.region
@@ -54,7 +57,7 @@ resource "google_compute_forwarding_rule" "frontends" {
   load_balancing_scheme = "EXTERNAL"
   backend_service       = google_compute_region_backend_service.elb_bes.self_link
   labels                = var.labels
-}*/
+}
 
 resource "google_compute_forwarding_rule" "frontends" {
   for_each = {for eip in var.frontends : 
@@ -73,7 +76,7 @@ resource "google_compute_forwarding_rule" "frontends" {
 }
 
 resource "google_compute_region_backend_service" "elb_bes" {
-  provider              = google-beta
+  provider              = google-beta #connection_tracking_policy.connection_persistence_on_unhealthy_backends requires beta
   name                  = "${local.prefix}bes-elb-${local.region_short}"
   region                = local.region
   load_balancing_scheme = "EXTERNAL"
@@ -85,14 +88,6 @@ resource "google_compute_region_backend_service" "elb_bes" {
       group = backend.value.self_link
     }
   }
-/*
-  backend {
-    group = google_compute_instance_group.fgt_umigs[0].self_link
-  }
-  backend {
-    group = google_compute_instance_group.fgt_umigs[1].self_link
-  }
-*/
   health_checks = [google_compute_region_health_check.health_check.self_link]
   connection_tracking_policy {
     connection_persistence_on_unhealthy_backends = "NEVER_PERSIST"
