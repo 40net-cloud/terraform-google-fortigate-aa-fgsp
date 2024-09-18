@@ -12,6 +12,7 @@ resource "google_compute_region_backend_service" "ilbs" {
     for_each = google_compute_instance_group.fgt_umigs
     content {
       group = backend.value.self_link
+      balancing_mode = "CONNECTION"
     }
   }
 

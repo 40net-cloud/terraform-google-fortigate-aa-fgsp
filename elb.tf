@@ -86,6 +86,7 @@ resource "google_compute_region_backend_service" "elb_bes" {
     for_each = google_compute_instance_group.fgt_umigs
     content {
       group = backend.value.self_link
+      balancing_mode = "CONNECTION"
     }
   }
   health_checks = [google_compute_region_health_check.health_check.self_link]
