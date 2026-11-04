@@ -130,14 +130,14 @@ variable "image" {
   type = object({
     project = optional(string, "fortigcp-project-001")
     name    = optional(string, "")
-    family  = optional(string, "fortigate-74-payg")
+    family  = optional(string, "fortigate-76-payg")
     version = optional(string, "")
     arch    = optional(string, "x64")
     lic     = optional(string, "payg")
   })
   description = "Indicate FortiOS image you want to deploy by specifying one of the following: image family name (as image.family); firmware version, architecture and licensing (as image.version, image.arch and image.lic); image name (as image.name) optionally with image project name for custom images (as image.project)."
   default = {
-    version = "7.2.8"
+    version = "7.6.8"
   }
   validation {
     condition     = contains(["arm", "x64"], var.image.arch)
