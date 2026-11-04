@@ -3,6 +3,8 @@ terraform {
   required_providers {
     google = {
       source = "hashicorp/google"
+      # 7.19 required for vlans
+      version = ">= 7.19.0"
     }
     google-beta = {
       source = "hashicorp/google-beta"
@@ -32,7 +34,7 @@ locals {
   service_account = coalesce(var.service_account, data.google_compute_default_service_account.default.email)
 
   # derive region from zones if provided, otherwise use the region from variable, as last resort use default region from provider
-  region          = coalesce(try(join("-", slice(split("-", var.zones[0]), 0, 2)), null), var.region, data.google_client_config.default.region)
+  region = coalesce(try(join("-", slice(split("-", var.zones[0]), 0, 2)), null), var.region, data.google_client_config.default.region)
 
   #sanitize labels
   labels = { for k, v in var.labels : k => replace(lower(v), " ", "_") }
@@ -49,34 +51,100 @@ locals {
   # List of used UMIG zones optionally padded by some unsed to make it always 3. See umigs resource at the end of this file for details
   zones3 = slice(concat(local.zones, compact([for i in data.google_compute_zones.zones_in_region.names : contains(local.zones, i) ? null : i])), 0, 3)
 
-  # Calculate last port for management or copy from vars. Used for FGT configuration bootstrap, ACL, and public IPs. 
-  mgmt_port = var.mgmt_port != null ? var.mgmt_port : "port${length(var.subnets)}"
+  # Calculate port1 for management or copy from vars. Used for FGT configuration bootstrap, ACL, and public IPs. 
+  mgmt_subnet = var.mgmt_subnet != null ? var.mgmt_subnet : data.google_compute_subnetwork.connected[0].name
 
   # Calculate FGSP port (last one) if set to "auto", otherwise use variable. Null means no dedicated port => FGSP over port1.
-  dedicated_fgsp_port = var.fgsp_port != "auto" ? var.fgsp_port : "port${length(var.subnets)}"
-  fgsp_port = coalesce(local.dedicated_fgsp_port, "port1" )
+  dedicated_fgsp_subnet = var.fgsp_subnet != "auto" ? var.fgsp_subnet : data.google_compute_subnetwork.connected[length(var.subnets) - 1].name
+  fgsp_subnet           = coalesce(local.dedicated_fgsp_subnet, data.google_compute_subnetwork.connected[0].name)
 
   #
   # Create common lists
   #
   hc_ranges_ilb = ["35.191.0.0/16", "130.211.0.0/22"]
   hc_ranges_elb = ["35.191.0.0/16", "209.85.152.0/22", "209.85.204.0/22"]
-  ports_all = [ for indx in range(length(var.subnets)) : "port${indx+1}"]
-  //ports_internal = slice( local.ports_all, 1, length(var.subnets)-1 )
-  ports_internal = setsubtract( local.ports_all, setunion(var.ports_external, [local.dedicated_fgsp_port]))
-  fgts = [ for indx in range(var.cluster_size) : "fgt${indx+1}" ]
+
+  # List of all subnet names (cleaned-up version of var.subnets with self-links converted to names). Used for looping and lookups.
+  subnets_all = data.google_compute_subnetwork.connected[*].name
+  # Map of subnet name to subnet object for easier lookups
+  connected_subnets = { for subnet in data.google_compute_subnetwork.connected : subnet.name => subnet }
+  # List of all subnet names without prefix and regionshort suffixes, used for cleaner resource names
+  root_subnet_names = { for subnet in data.google_compute_subnetwork.connected :
+    subnet.name => trimsuffix(trimprefix(subnet.name, local.prefix), "-${local.region_short}")
+  }
+  # List of traffic subnet names with ELBs (if marked in var.ports as public, falls back to first subnet if not specified).
+  subnets_public = setunion(
+    [for net in local.subnets_all : net if coalesce(try(var.ports[net].public, false), false)],
+    try(var.ports[0].public, null) == null ? [local.subnets_all[0]] : []
+  )
+  # List of traffic subnet names for ILBs (all - public - fgsp - mgmt)
+  subnets_internal = setsubtract(local.subnets_all, setunion(local.subnets_public, [local.dedicated_fgsp_subnet, local.mgmt_subnet]))
+  # List of all FortiGate names based on cluster size, used for looping and naming
+  fgts = [for indx in range(var.cluster_size) : "fgt${indx + 1}"]
+}
+
+output "subnets_public" {
+  value = local.subnets_public
+}
+output "subnets_internal" {
+  value = local.subnets_internal
+}
+output "subnet_fgsp" {
+  value = local.dedicated_fgsp_subnet
+}
+output "subnet_mgmt" {
+  value = local.mgmt_subnet
+}
+
+## locals to produce names of ports for each subnet
+# Accepts parent NICs in both Forti and Google formats
+locals {
+  snic_nets = [for net in local.subnets_all : net if !can(var.ports[net].vlan)]
+
+  # map of standard NIC names
+  snics = { for indx in range(length(local.snic_nets)) : local.snic_nets[indx] => "port${indx + 1}" }
+
+  # map of dynamic NIC names
+  dnics = { for net in local.subnets_all : net => can(regex("^port\\d+$", var.ports[net].vlan_parent)) ?
+    "${var.ports[net].vlan_parent}.${var.ports[net].vlan}" :
+    "port${tonumber(regex("\\d+$", var.ports[net].vlan_parent) + 1)}.${var.ports[net].vlan}"
+  if can(var.ports[net].vlan) }
+
+  # map of all NIC names in Forti format (port1, port2, port3.10, ...)
+  nic_names = merge(local.snics, local.dnics)
+
+  # map of dynamic NIC names in GCP format (nic0.10, nic1.20, ...)
+  dnics_gcp = { for net, port in local.dnics : net => "nic${tonumber(regex("\\d+$", port)) - 1}" }
+
 }
 
 
 # 
 # Pull information about subnets we will connect to FortiGate instances. Subnets must
 # already exist (can be created in parent module).
-# Index by port name
+# NOTE: do not change this as it's the basis for all networking in the module.
+# Ordered list
 #
 data "google_compute_subnetwork" "connected" {
-  for_each = toset([for indx in range(length(var.subnets)) : "port${indx + 1}"]) #toset(var.subnets)
-  name     = var.subnets[substr(each.value, 4, 1)-1]
-  region   = local.region
+  count = length(var.subnets)
+
+  self_link = try(
+    # Case 1: already full URL
+    regex(
+      "^https://www.googleapis.com/compute/v1/projects/[^/]+/regions/[^/]+/subnetworks/[^/]+$",
+      var.subnets[count.index]
+    ),
+
+    # Case 2: short form → convert to full URL
+    "https://www.googleapis.com/compute/v1/${regex(
+      "^projects/[^/]+/regions/[^/]+/subnetworks/[^/]+$",
+      var.subnets[count.index]
+    )}",
+    # If neither matches
+    null
+  )
+  name   = var.subnets[count.index]
+  region = local.region
 }
 
 #
@@ -85,7 +153,7 @@ data "google_compute_subnetwork" "connected" {
 #
 locals {
   region_short = replace(replace(replace(replace(replace(replace(replace(replace(replace(local.region, "-south", "s"), "-east", "e"), "-central", "c"), "-north", "n"), "-west", "w"), "europe", "eu"), "australia", "au"), "northamerica", "na"), "southamerica", "sa")
-  zones_short = [ for zone in local.zones3 :
+  zones_short = [for zone in local.zones3 :
     "${local.region_short}${substr(zone, length(local.region) + 1, 1)}"
   ]
 }
@@ -94,12 +162,13 @@ locals {
 # Create FortiGate instances with secondary logdisks and configuration.
 #
 resource "google_compute_disk" "logdisk" {
-  count = var.cluster_size
+  count = var.logdisk_size > 0 ? var.cluster_size : 0
 
-  name = "${local.prefix}disk-logdisk${count.index + 1}-${local.zones_short[count.index%length(local.zones)]}"
-  size = var.logdisk_size
-  type = "pd-ssd"
-  zone = local.zones[count.index]
+  name   = "${local.prefix}disk-logdisk${count.index + 1}-${local.zones_short[count.index % length(local.zones)]}"
+  size   = var.logdisk_size
+  type   = var.logdisk_type
+  zone   = local.zones[count.index]
+  labels = var.labels
 }
 
 #
@@ -127,31 +196,47 @@ data "cloudinit_config" "fgt" {
   part {
     filename     = "config"
     content_type = "text/plain; charset=\"us-ascii\""
-    content = templatefile("${path.module}/base_config.tftpl", {
-      hostname         = "${local.prefix}fgt${count.index + 1}-${local.zones_short[count.index%length(local.zones)]}"
+    content = templatefile("${path.module}/base_config_dnic.tftpl", {
+      hostname         = "${local.prefix}${local.fgts[count.index]}-${local.zones_short[count.index % length(local.zones)]}"
       healthcheck_port = var.healthcheck_port
-      fgt_config       = "" #var.fgt_config
       # all private addresses for given instance. ordered by subnet/nic index0
-      prv_ips = { for indx, addr in google_compute_address.prv : split("_", indx)[0] => addr.address if tonumber(split("_", indx)[1]) == count.index }
-      ilb_ips = google_compute_address.ilb
+      prv_ips = { for indx, addr in google_compute_address.prv : split("|", indx)[1] => addr.address
+        if tonumber(regex("\\d+$", split("|", indx)[0])) - 1 == count.index
+      }
+      snics = { for net, port in local.snics : port => {
+        subnet  = net
+        address = google_compute_address.prv["fgt${count.index + 1}|${net}"].address
+      } }
+      dnics = { for net, port in local.dnics : port => {
+        subnet      = net
+        address     = google_compute_address.prv["fgt${count.index + 1}|${net}"].address
+        vlan        = var.ports[net].vlan
+        vlan_parent = var.ports[net].vlan_parent
+      } }
+
+      ilb_ips = { for indx, addr in google_compute_address.ilb : local.nic_names[indx] => addr.address }
       ## reverse indexing in case we wanted more subnets per port in future
-      subnets = { for port, subnet in data.google_compute_subnetwork.connected :
+      subnets = { for subnet in data.google_compute_subnetwork.connected :
         subnet.ip_cidr_range => {
-          "dev" : port,
+          "dev" : local.nic_names[subnet.name],
           "name" : subnet.name
         }
       }
-      gateways = { for port, subnet in data.google_compute_subnetwork.connected : port=>subnet.gateway_address }
-      ha_indx    = count.index
+      gateways = { for net, port in local.nic_names : port => local.connected_subnets[net].gateway_address }
+      ha_indx  = count.index
       # each private address on last interface except for matching the instance index
-      ha_peers  = [for key, addr in google_compute_address.prv : addr.address if tonumber(split("_", key)[1]) != count.index && split("_", key)[0] == local.fgsp_port]
-      frontends = concat([for eip in var.frontends : try(local.eip_all[eip], local.eip_all[eip.name])], [for eipobj in var.frontends_obj : eipobj.address])
-      mgmt_port = local.mgmt_port
+      ha_peers = [for key, addr in google_compute_address.prv :
+        addr.address if tonumber(regex("\\d+$", split("|", key)[0])) - 1 != count.index && split("|", key)[1] == local.fgsp_subnet
+      ]
+      frontends        = concat([for eip in var.frontends : try(local.eip_all[eip], local.eip_all[eip.name])], [for eipobj in var.frontends_obj : eipobj.address])
+      mgmt_port        = local.nic_names[local.mgmt_subnet]
       mgmt_port_public = var.mgmt_port_public
-      fortimanager = var.fortimanager
-      fgt_config = var.fgt_config
+      admin_acl        = var.admin_acl
+      fortimanager     = var.fortimanager
+      fgt_config       = var.fgt_config
     })
   }
+
 }
 
 
@@ -193,40 +278,49 @@ resource "google_compute_instance" "fgt_vm" {
   count = var.cluster_size
 
   zone           = local.zones[count.index % length(local.zones)]
-  name           = "${local.prefix}vm-${local.fgts[count.index]}-${local.zones_short[count.index%length(local.zones)]}"
+  name           = "${local.prefix}vm-${local.fgts[count.index]}-${local.zones_short[count.index % length(local.zones)]}"
   machine_type   = var.machine_type
   can_ip_forward = true
   tags           = var.fgt_tags
 
   boot_disk {
     initialize_params {
-      image = local.fgt_image.self_link
+      image  = local.fgt_image.self_link
       labels = var.labels
     }
   }
-  attached_disk {
-    source = google_compute_disk.logdisk[count.index].name
+  dynamic "attached_disk" {
+    for_each = var.logdisk_size > 0 ? [1] : []
+    content {
+      source = google_compute_disk.logdisk[count.index].name
+    }
   }
   service_account {
     email  = local.service_account
     scopes = ["cloud-platform"]
   }
+  shielded_instance_config {
+    enable_secure_boot = var.enable_secure_boot
+  }
+
   metadata = {
     user-data          = data.cloudinit_config.fgt[count.index].rendered
     license            = fileexists(try(var.license_files[count.index], "null")) ? file(var.license_files[count.index]) : null
     serial-port-enable = var.serial_port_enable
-    oslogin-enable = var.oslogin_enable
+    oslogin-enable     = var.oslogin_enable
   }
 
   dynamic "network_interface" {
     for_each = data.google_compute_subnetwork.connected
+    iterator = subnet
 
     content {
-      subnetwork = network_interface.value.name
-      nic_type   = local.nic_type
-      network_ip = google_compute_address.prv["${network_interface.key}_${count.index}"].address
+      subnetwork = subnet.value.self_link
+      nic_type   = try(var.ports[subnet.value.name].vlan, null) == null ? local.nic_type : null
+      network_ip = google_compute_address.prv["fgt${count.index + 1}|${subnet.value.name}"].address
+      vlan       = try(var.ports[subnet.value.name].vlan, null)
       dynamic "access_config" {
-        for_each = var.mgmt_port_public && local.mgmt_port == network_interface.key ? [1] : []
+        for_each = var.mgmt_port_public && local.mgmt_subnet == subnet.value.name ? [1] : []
         content {
           nat_ip = google_compute_address.mgmt[local.fgts[count.index]].address
         }
